@@ -4,6 +4,7 @@ import authMiddle from "../middlewares/authMiddleware.js";
 const router = express.Router();
 import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken"
+import { generateAccessToken, generateRefreshToken } from "../utils/generateToken.js"
 
 
 //Register user 
@@ -38,26 +39,31 @@ router.post("/register", async (req,res) =>
    
 try {
      const {email, password} = req.body;
-    
+     
      const user = await User.findOne({email});
      
      if(!user)
      {
-        res.json({message: "User not found"});
+        return res.json({message: "User not found"});
      }
-     
-     console.log(password);
-      console.log("user found",user);
 
      const isMatch = await bcrypt.compare(password, user.password);
      if(!isMatch)
      {
-        res.json({message: "passwords dont match"});
+        return res.json({message: "passwords dont match"});
      }
      
-     const token = jwt.sign({id: user._id},process.env.JWT_SECRET,{expiresIn: '1h'});
+     const acessToken = generateAccessToken(user);
+     const refreshToken = generateRefreshToken(user);
+
+     user.refreshToken = refreshToken;
+
+     await user.save();
+     
+     res.cookie('refreshToken', refreshToken , {httpOnly: true, secure: true, sameSite: 'Strict'});
+     
      res.json({
-        token, 
+        acessToken, 
         user: { id: user._id, username: user.username, email: user.email }
     });
     
@@ -82,7 +88,59 @@ router.get("/profile",authMiddle,async (req,res)=>
 
 })
 
+//refresh token endpoint 
+
+router.post("/refresh", async(req,res)=> 
+{
+   try {
+     const refreshToken = req.cookies.refreshToken;
+     if(!refreshToken)
+     {
+        return res.json({message: "no token found"});
+     }
+     
+     const user = User.findOne({refreshToken});
+ 
+     if(!user)
+     {
+        return res.json({message: "no user found with this refresh token"});
+     }
+     
+     jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET, (err,code)=>  {
+         if (err) return res.json({message: "invalid token"});
+         
+         const newAccessToken = generateAccessToken(user);
+ 
+         res.json({accessToken: newAccessToken });
+     });
+     
+   } catch (error) {
+      res.json("there was an error");
+   }
+     
+
+}) 
+
+router.post("/logout",async (req,res)=> 
+{
+   try {
+    const user = await User.findOneAndUpdate(
+        { refreshToken: req.cookies.refreshToken },
+        { refreshToken: null },
+        { new: true } // Optional: Returns the updated user
+    );
+    
+    if (!user) return res.json({ message: "User not found" });
+     res.clearCookie('refreshToken',{httpOnly: true, secure: true, sameSite:'Strict'});
+     res.json({message : "logged out successfully"});
+ 
+   } catch (error) {
+       res.json({message: "an error occured while logging out"});
+
+   }
 
 
+
+})
 
 export default router;

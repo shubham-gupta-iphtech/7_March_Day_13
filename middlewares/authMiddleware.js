@@ -25,3 +25,4 @@ const authMiddle = (req,res,next) =>
 }
 
 export default authMiddle;
+
